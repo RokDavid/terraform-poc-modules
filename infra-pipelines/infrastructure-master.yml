@@ -1,0 +1,81 @@
+####
+# Pipeline for Azure DevOps
+####
+
+trigger: 
+  - master
+
+pool:
+  name: Azure Pipelines
+   
+
+variables:  
+  - name: anyTfChanges
+    value: false
+
+steps:
+  - task: TerraformInstaller@0
+    displayName: "Install terraform"
+    inputs:
+      terraformVersion: 'latest'
+    
+    # backend config
+  - powershell: |
+      terraform init -force-copy `
+      -backend-config='resource_group_name=$(TF_VAR_BACKEND-RGNAME)' `
+      -backend-config='storage_account_name=$(TF_VAR_BACKEND-STACCOUNT)' `
+      -backend-config='container_name=$(TF_VAR_BACKEND-CNTNAME)' `
+      -backend-config='key=$(TF_VAR_PREFIX)-$(TF_VAR_BACKEND-KEY)'
+    displayName: Terraform Init
+    workingDirectory: $(Build.SourcesDirectory)/terraform
+    env:
+      ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+      ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+      ARM_TENANT_ID: $(ARM_TENANT_ID)
+      ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+
+  - powershell: terraform plan -out=tfplan
+    displayName: Terraform Plan
+    workingDirectory: $(Build.SourcesDirectory)/terraform
+    env:
+      ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+      ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+      ARM_TENANT_ID: $(ARM_TENANT_ID)
+      ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+
+    # check if there are any changes in tf plan
+  - powershell: |
+      # Write-Host "LASTEXITCODE : $LASTEXITCODE"
+      $plan = $(terraform show -json tfplan | ConvertFrom-Json)
+      $actions = $plan.resource_changes.change.actions
+      Write-Host "Terraform actions : $actions"
+      if (($actions -contains 'create') -or ($actions -contains 'delete') -or ($actions -contains 'update'))
+      {
+        Write-Host "Terraform will perform the following actions : $actions"
+        Write-Host "##vso[task.setvariable variable=anyTfChanges;]true"
+        Write-Host "Changes $(anyTfChanges)"
+      }
+      else
+      {
+        Write-Host "There is no change detected in Terraform tfplan file"
+        Write-Host "Changes $(anyTfChanges)"
+      }
+    displayName: Check for changes
+    workingDirectory: $(Build.SourcesDirectory)/terraform
+    env:
+      ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+      ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+      ARM_TENANT_ID: $(ARM_TENANT_ID)
+      ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+
+    # here can be approval step #
+    # if there were changes, apply them
+  - powershell: terraform apply tfplan
+    displayName: Terraform Apply Plan
+    condition: eq(variables.anyTfChanges, true)
+    workingDirectory: $(Build.SourcesDirectory)/terraform
+    env:
+      ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+      ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+      ARM_TENANT_ID: $(ARM_TENANT_ID)
+      ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
